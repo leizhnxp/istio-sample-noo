@@ -1,0 +1,191 @@
+#apiVersion: v1
+#kind: Namespace
+#metadata:
+#  labels:
+#    istio-injection: enabled
+#    namespace: playground
+#  name: playground
+#
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: curl
+    deployment: curl
+  name: curl
+  namespace: playground
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: curl
+  template:
+    metadata:
+      labels:
+        app: curl
+    spec:
+      containers:
+      - image: curlimages/curl:7.79.1
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/sleep", "1d"]
+        name: curl
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: openresty
+    deployment: openresty
+  name: openresty
+  namespace: playground
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: httpserver
+  template:
+    metadata:
+      labels:
+        app: httpserver
+        version: openresty
+    spec:
+      containers:
+      - image: openresty/openresty:1.19.9.1-bullseye
+        imagePullPolicy: IfNotPresent
+        name: openresty
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: nginx
+    deployment: nginx
+  name: nginx
+  namespace: playground
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: httpserver
+  template:
+    metadata:
+      labels:
+        app: httpserver
+        version: nginx
+    spec:
+      containers:
+      - image: nginx:1.21.6
+        imagePullPolicy: IfNotPresent
+        name: nginx
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: http-svc-nodeport
+    service: with-nodeport
+  name: http-svc-nodeport 
+  namespace: playground
+spec:
+  ports:
+  - nodePort: 31806
+    port: 80
+    protocol: TCP
+    targetPort: 80
+    name: http
+  selector:
+    app: httpserver
+  sessionAffinity: None
+  type: NodePort
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: http-svc-cluster
+    server: only-clusterip
+  name: http-svc-cluster
+  namespace: playground
+spec:
+  ports:
+  - port: 80
+    protocol: TCP
+    targetPort: 80
+    name: http
+  selector:
+    app: httpserver
+  sessionAffinity: None
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: httpserver-gateway
+  namespace: playground
+  labels:
+    gateway: onlyone
+spec:
+  selector:
+    istio: ingressgateway # use istio default controller
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - http-svc-cluster.playground.svc.cluster.local
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: httpserver-gw-vs
+  namespace: playground
+  labels:
+    vs: with-gateway
+spec:
+  hosts:
+  - http-svc-cluster
+  gateways:
+  - httpserver-gateway
+  http:
+  - route:
+    - destination:
+        host: http-svc-cluster
+        port:
+          number: 80
+        subset: nginx
+
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: httpserver-vs
+  namespace: playground
+  labels:
+    vs: only-internal
+spec:
+  hosts:
+  - http-svc-cluster
+  http:
+  - route:
+    - destination:
+        host: http-svc-cluster
+        subset: openresty
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: httpserver
+  namespace: playground
+  labels:
+    dr: onlyOne
+spec:
+  host: http-svc-cluster
+  subsets:
+  - name: nginx
+    labels:
+      version: nginx
+  - name: openresty
+    labels:
+      version: openresty
+
